@@ -1,0 +1,53 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isProfileComplete(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId)) &&
+        get(/databases/$(database)/documents/users/$(userId)).data.profileType != null;
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isAuthenticated() && isOwner(userId);
+      allow delete: if isAuthenticated() && isOwner(userId);
+    }
+
+    match /connections/{connectionId} {
+      function isParticipant() {
+        let data = request.resource.data;
+        return isAuthenticated() && 
+          (request.auth.uid == data.fromUserId || request.auth.uid == data.toUserId);
+      }
+
+      function isReceiver() {
+        let existingData = resource.data;
+        return request.auth.uid == existingData.toUserId;
+      }
+
+      function canModifyConnection() {
+        let existingData = resource.data;
+        return isAuthenticated() && 
+          (request.auth.uid == existingData.fromUserId || request.auth.uid == existingData.toUserId);
+      }
+
+      allow read: if isAuthenticated();
+      allow create: if isParticipant() && 
+                      isProfileComplete(request.resource.data.fromUserId) &&
+                      isProfileComplete(request.resource.data.toUserId);
+      allow update: if canModifyConnection() && 
+                      (resource.data.status == 'pending' && isReceiver() ||
+                       resource.data.status == 'connected');
+      allow delete: if canModifyConnection();
+    }
+  }
+}
